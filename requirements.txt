@@ -1,4 +1,5 @@
 telebot
 eyed3
 requests
+python-dotenv
 
