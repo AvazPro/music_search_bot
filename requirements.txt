@@ -3,4 +3,5 @@ eyed3
 requests
 python-dotenv
 shazamio
+yt-dlp
 
