@@ -4,4 +4,5 @@ requests
 python-dotenv
 shazamio
 yt-dlp
-
+pyTelegramBotAPI
+Flask

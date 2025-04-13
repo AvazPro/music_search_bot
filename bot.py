@@ -1,15 +1,19 @@
 import os
 import telebot
 import asyncio
+from flask import Flask, request
 from dotenv import load_dotenv
 from shazamio import Shazam
 import yt_dlp
 import eyed3
 
-# .env faylidan bot tokenini yuklab olish
+# .env faylidan token olish
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # https://your-app-name.onrender.com/bot
+
 bot = telebot.TeleBot(BOT_TOKEN)
+app = Flask(__name__)
 
 # Shazam orqali musiqa aniqlash
 async def recognize_song(file_path):
@@ -23,7 +27,7 @@ async def recognize_song(file_path):
     except:
         return None
 
-# YouTube-dan MP3 formatida musiqa yuklab olish
+# YouTube-dan MP3 yuklab olish
 def download_mp3(search_query):
     ydl_opts = {
         'format': 'bestaudio/best',
@@ -39,20 +43,22 @@ def download_mp3(search_query):
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         try:
-            info = ydl.extract_info(f"ytsearch1:{search_query}", download=True)
+            ydl.extract_info(f"ytsearch1:{search_query}", download=True)
             return 'downloaded_song.mp3'
         except Exception as e:
             print("Yuklab olishda xatolik:", e)
             return None
 
-# MP3 faylga ID3 taglarini qo‘shish (musiqa nomi va ijrochi)
+# ID3 tag qo‘shish
 def add_id3_tags(file_path, artist, title):
     audiofile = eyed3.load(file_path)
+    if audiofile.tag is None:
+        audiofile.initTag()
     audiofile.tag.artist = artist
     audiofile.tag.title = title
     audiofile.tag.save()
 
-# Media fayllarni qabul qilish va qayta ishlash
+# Telegramga media kelganda
 @bot.message_handler(content_types=['audio', 'voice', 'video'])
 def handle_media(message):
     file_id = (
@@ -60,14 +66,13 @@ def handle_media(message):
         message.voice.file_id if message.content_type == 'voice' else
         message.video.file_id
     )
-
     file_info = bot.get_file(file_id)
     downloaded_file = bot.download_file(file_info.file_path)
 
     with open("temp_input.mp3", 'wb') as f:
         f.write(downloaded_file)
 
-    # Asinxron tarzda musiqani aniqlash
+    # Musiqani aniqlash
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     query = loop.run_until_complete(recognize_song("temp_input.mp3"))
@@ -78,24 +83,37 @@ def handle_media(message):
 
     bot.reply_to(message, f"🔍 Qidirilmoqda: {query}")
 
-    # Musiqani yuklab olish
+    # YouTube'dan yuklab olish
     mp3_file = download_mp3(query)
 
     if mp3_file and os.path.exists(mp3_file):
-        # ID3 taglarini qo‘shish
         add_id3_tags(mp3_file, query.split(' - ')[0], query.split(' - ')[1])
 
-        # Faylni yuborish
         with open(mp3_file, 'rb') as audio:
             bot.send_audio(message.chat.id, audio)
 
-        # Yuklab olingan faylni o‘chirish
         os.remove(mp3_file)
     else:
         bot.send_message(message.chat.id, "❌ MP3 yuklab bo‘lmadi.")
 
-    # Xatolikdan so‘ng vaqtinchalik faylni o‘chirish
     os.remove("temp_input.mp3")
 
-# Botni ishga tushurish
-bot.infinity_polling()
+# Flask uchun webhook endpoint
+@app.route(f"/bot", methods=['POST'])
+def webhook():
+    json_string = request.get_data().decode('utf-8')
+    update = telebot.types.Update.de_json(json_string)
+    bot.process_new_updates([update])
+    return '', 200
+
+# Flask ishga tushishi
+@app.route("/", methods=["GET"])
+def index():
+    return "Bot ishlayapti!"
+
+# Webhookni o‘rnatish
+if __name__ == "__main__":
+    bot.remove_webhook()
+    bot.set_webhook(url=WEBHOOK_URL)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
